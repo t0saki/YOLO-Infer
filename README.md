@@ -18,8 +18,8 @@ A comprehensive YOLO11 deep learning platform supporting training, fine-tuning, 
 
 ```bash
 # Clone the repository
-git clone <repository-url>
-cd yolo11_project
+git clone https://github.com/t0saki/YOLO-Infer.git
+cd YOLO-Infer
 
 # Install dependencies
 pip install -r requirements.txt
@@ -77,7 +77,7 @@ python main.py benchmark --type throughput --duration 60
 ## Project Structure
 
 ```
-yolo11_project/
+YOLO-Infer/
 ├── core/                    # Core functionality
 │   ├── model.py            # YOLO11 model wrapper
 │   ├── trainer.py          # Training and fine-tuning

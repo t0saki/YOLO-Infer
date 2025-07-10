@@ -1,0 +1,200 @@
+# YOLO11 Project Default Configuration
+
+# Model configuration
+model:
+  task: 'detect'  # detect, segment, classify, pose, obb
+  size: 'n'       # n, s, m, l, x
+  device: null    # auto-detect if null
+  pretrained: true
+
+# Training configuration
+training:
+  epochs: 100
+  batch_size: 16
+  image_size: 640
+  learning_rate: 0.01
+  momentum: 0.937
+  weight_decay: 0.0005
+  warmup_epochs: 3
+  warmup_momentum: 0.8
+  warmup_bias_lr: 0.1
+  patience: 100
+  save_period: -1
+  workers: 8
+  cache: false
+  
+  # Optimizer settings
+  optimizer: 'auto'
+  lr_scheduler: 'cosine'
+  close_mosaic: 10
+  
+  # Loss weights
+  box: 7.5
+  cls: 0.5
+  dfl: 1.5
+  
+  # Data augmentation
+  augment:
+    hsv_h: 0.015
+    hsv_s: 0.7
+    hsv_v: 0.4
+    degrees: 0.0
+    translate: 0.1
+    scale: 0.5
+    shear: 0.0
+    perspective: 0.0
+    flipud: 0.0
+    fliplr: 0.5
+    mosaic: 1.0
+    mixup: 0.0
+    copy_paste: 0.0
+
+# Validation configuration
+validation:
+  batch_size: 16
+  image_size: 640
+  conf_threshold: 0.001
+  iou_threshold: 0.6
+  max_det: 300
+  save_json: false
+  save_hybrid: false
+  augment: false
+  verbose: true
+  split: 'val'
+  plots: true
+
+# Inference configuration
+inference:
+  conf_threshold: 0.25
+  iou_threshold: 0.45
+  max_det: 300
+  agnostic_nms: false
+  save: true
+  save_txt: false
+  save_conf: false
+  save_crop: false
+  show: false
+  vid_stride: 1
+  line_width: null
+  visualize: false
+
+# Optimization configuration
+optimization:
+  # Quantization settings
+  quantization:
+    backend: 'fbgemm'  # fbgemm, qnnpack, onednn
+    dtype: 'qint8'     # qint8, quint8, qint32
+    calibration_batches: 100
+    
+    # Post-training quantization
+    ptq:
+      enable: false
+      
+    # Dynamic quantization
+    dynamic:
+      enable: false
+      
+    # Quantization-aware training
+    qat:
+      enable: false
+      epochs: 10
+      learning_rate: 0.001
+  
+  # Pruning settings (for future expansion)
+  pruning:
+    enable: false
+    method: 'magnitude'  # magnitude, structured, unstructured
+    sparsity_ratio: 0.5
+    
+  # Knowledge distillation settings (for future expansion)
+  distillation:
+    enable: false
+    temperature: 4.0
+    alpha: 0.7
+
+# Benchmark configuration
+benchmark:
+  warmup_runs: 10
+  benchmark_runs: 100
+  image_sizes: [320, 640, 1280]
+  batch_sizes: [1, 4, 8, 16]
+  model_sizes: ['n', 's', 'm']
+  throughput_duration: 60
+
+# Demo configuration
+demo:
+  default_conf: 0.5
+  default_iou: 0.45
+  show_results: true
+  save_results: true
+  video_fps: 30
+
+# Paths configuration
+paths:
+  data_dir: 'data'
+  experiments_dir: 'experiments'
+  models_dir: 'models'
+  results_dir: 'results'
+  logs_dir: 'logs'
+
+# Logging configuration
+logging:
+  level: 'INFO'  # DEBUG, INFO, WARNING, ERROR
+  console_output: true
+  file_output: true
+  tensorboard: false
+  wandb: false
+
+# Dataset configuration
+dataset:
+  # Common dataset settings
+  train_split: 0.8
+  val_split: 0.1
+  test_split: 0.1
+  
+  # COCO dataset
+  coco:
+    path: 'datasets/coco'
+    train: 'train2017.txt'
+    val: 'val2017.txt'
+    test: 'test2017.txt'
+    nc: 80
+    
+  # Custom dataset template
+  custom:
+    path: 'datasets/custom'
+    train: 'train'
+    val: 'val'
+    test: 'test'
+    nc: 1
+    names: ['class1']
+
+# Hardware configuration
+hardware:
+  # Multi-GPU training
+  multi_gpu: false
+  device_ids: [0, 1]
+  
+  # Mixed precision training
+  amp: true
+  
+  # CPU settings
+  cpu_workers: 8
+  
+  # Memory settings
+  pin_memory: true
+  persistent_workers: true
+
+# Export configuration
+export:
+  format: 'onnx'  # onnx, torchscript, tflite, edgetpu, tfjs, paddle, ncnn
+  imgsz: [640, 640]
+  keras: false
+  optimize: false
+  half: false
+  int8: false
+  dynamic: false
+  simplify: false
+  opset: null
+  workspace: 4
+  nms: false

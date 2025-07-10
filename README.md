@@ -1,6 +1,6 @@
 # YOLO11 Project
 
-A comprehensive YOLO11 deep learning platform supporting training, fine-tuning, quantization, and deployment with advanced optimization techniques.
+(WIP) A comprehensive YOLO11 deep learning platform supporting training, fine-tuning, quantization, and deployment with advanced optimization techniques.
 
 ## Features
 

@@ -38,7 +38,7 @@ class PostTrainingQuantizer(QuantizationOptimizer):
         
         # PTQ specific configurations
         self.num_calibration_batches = self.config.get('num_calibration_batches', 100)
-        self.quantization_backend = self.config.get('backend', 'fbgemm')
+        self.quantization_backend = self.config.get('backend', 'qnnpack')
         self.quantization_dtype = self.config.get('dtype', torch.qint8)
         
         # Set quantization backend
@@ -391,8 +391,8 @@ class QATQuantizer(QuantizationOptimizer):
         # QAT specific configurations
         self.num_epochs = self.config.get('num_epochs', 10)
         self.learning_rate = self.config.get('learning_rate', 1e-4)
-        self.quantization_backend = self.config.get('backend', 'fbgemm')
-        
+        self.quantization_backend = self.config.get('backend', 'qnnpack')
+
         # Set quantization backend
         torch.backends.quantized.engine = self.quantization_backend
     

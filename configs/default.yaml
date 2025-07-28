@@ -82,7 +82,7 @@ inference:
 optimization:
   # Quantization settings
   quantization:
-    backend: 'fbgemm'  # fbgemm, qnnpack, onednn
+    backend: 'qnnpack'  # fbgemm, qnnpack, onednn
     dtype: 'qint8'     # qint8, quint8, qint32
     calibration_batches: 100
     

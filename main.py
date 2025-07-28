@@ -13,6 +13,8 @@ import logging
 from pathlib import Path
 from typing import Dict, Any, Optional
 
+import torch
+
 # Add project root to path
 sys.path.append(str(Path(__file__).parent))
 

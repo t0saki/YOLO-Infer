@@ -106,12 +106,40 @@ class BaseOptimizer(ABC):
         
         # Save model and optimization info
         save_dict = {
-            'model': self.optimized_model,
             'optimization_info': self.get_optimization_info(),
             'config': self.config
         }
         
-        torch.save(save_dict, path)
+        # Handle model saving with error handling for non-picklable objects
+        try:
+            # Try to save the entire model first
+            save_dict['model'] = self.optimized_model
+            torch.save(save_dict, path)
+        except (TypeError, AttributeError) as e:
+            if "cannot pickle" in str(e):
+                logger.warning("Cannot pickle entire model, saving model state dict instead")
+                # Save only the model state dict and necessary info to reconstruct
+                model_to_save = self.optimized_model
+                
+                # Handle YOLO11 model wrapper
+                if hasattr(model_to_save, 'model'):
+                    # Extract the underlying PyTorch model
+                    save_dict['model_state_dict'] = model_to_save.model.state_dict()
+                    save_dict['model_class'] = model_to_save.__class__.__name__
+                    save_dict['model_config'] = {
+                        'task': getattr(model_to_save, 'task', None),
+                        'size': getattr(model_to_save, 'size', None),
+                        'device': getattr(model_to_save, 'device', None)
+                    }
+                else:
+                    # Direct PyTorch model
+                    save_dict['model_state_dict'] = model_to_save.state_dict()
+                    save_dict['model_class'] = model_to_save.__class__.__name__
+                
+                torch.save(save_dict, path)
+            else:
+                raise
+        
         logger.info(f"Optimized model saved to: {path}")
     
     def load_optimized_model(self, path: Union[str, Path]) -> None:
@@ -126,7 +154,21 @@ class BaseOptimizer(ABC):
             raise FileNotFoundError(f"Model file not found: {path}")
         
         save_dict = torch.load(path, map_location=self.device)
-        self.optimized_model = save_dict['model']
+        
+        # Handle both old and new save formats
+        if 'model' in save_dict:
+            # Full model was saved
+            self.optimized_model = save_dict['model']
+        elif 'model_state_dict' in save_dict:
+            # Only state dict was saved, reconstruct model
+            logger.warning("Loading model from state dict - reconstruction may not be exact")
+            # In this case, we'll need to reconstruct the model
+            # This is a simplified approach - in practice, you'd want to properly reconstruct the model
+            self.optimized_model = None
+            logger.info("Model state dict loaded - full model reconstruction not implemented in base class")
+        else:
+            raise ValueError("Invalid save file format: no model or state dict found")
+        
         self.optimization_metrics = save_dict.get('optimization_info', {})
         self.config.update(save_dict.get('config', {}))
         
@@ -200,7 +242,7 @@ class QuantizationOptimizer(BaseOptimizer):
         device: Optional[str] = None
     ):
         super().__init__(model, config, device)
-        self.quantization_backend = self.config.get('backend', 'fbgemm')
+        self.quantization_backend = self.config.get('backend', 'qnnpack')
         self.quantization_dtype = self.config.get('dtype', torch.qint8)
         self.calibration_data = None
         

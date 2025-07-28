@@ -10,3 +10,5 @@ distilled_weights
 __pycache__
 *.log
 *.pt
+yolo11_project
+experiments

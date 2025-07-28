@@ -124,6 +124,7 @@ class YOLO11Trainer:
         self.current_epoch = 0
         
         # Prepare training arguments
+        # Note: We don't pass 'device' here since it's already set in the model during initialization
         train_args = {
             'data': data,
             'epochs': epochs,
@@ -134,7 +135,6 @@ class YOLO11Trainer:
             'save_period': save_period,
             'val': val,
             'plots': plots,
-            'device': self.device,
             'project': str(self.output_dir.parent),
             'name': self.output_dir.name,
             'exist_ok': True,
@@ -275,9 +275,9 @@ class YOLO11Trainer:
         self.model.load(checkpoint_path)
         
         # Resume training
+        # Note: We don't pass 'device' here since it's already set in the model during initialization
         resume_args = {
             'resume': True,
-            'device': self.device,
             'project': str(self.output_dir.parent),
             'name': self.output_dir.name,
             'exist_ok': True,
@@ -303,9 +303,9 @@ class YOLO11Trainer:
         """
         logger.info("Running model validation...")
         
+        # Note: We don't pass 'device' here since it's already set in the model during initialization
         val_args = {
             'data': data,
-            'device': self.device,
             **kwargs
         }
         

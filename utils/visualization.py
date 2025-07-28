@@ -138,7 +138,7 @@ def create_video_writer(
     fps: int,
     width: int,
     height: int,
-    fourcc: str = 'mp4v'
+    fourcc: str = 'avc1'
 ) -> cv2.VideoWriter:
     """
     Create a video writer for saving video output.
@@ -156,16 +156,37 @@ def create_video_writer(
     # Ensure output directory exists
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     
-    # Create fourcc code
-    fourcc_code = cv2.VideoWriter_fourcc(*fourcc)
+    # Try different codecs in order of preference
+    codecs = ['avc1', 'mp4v', 'H264', 'X264']
+    video_writer = None
     
-    # Create video writer
-    video_writer = cv2.VideoWriter(
-        output_path,
-        fourcc_code,
-        fps,
-        (width, height)
-    )
+    for codec in codecs:
+        try:
+            fourcc_code = cv2.VideoWriter_fourcc(*codec)
+            video_writer = cv2.VideoWriter(
+                output_path,
+                fourcc_code,
+                fps,
+                (width, height)
+            )
+            if video_writer.isOpened():
+                logger.info(f"Successfully created video writer with codec: {codec}")
+                break
+            else:
+                video_writer = None
+        except Exception as e:
+            logger.warning(f"Failed to create video writer with codec {codec}: {e}")
+            continue
+    
+    if video_writer is None:
+        # Fallback to default codec
+        fourcc_code = cv2.VideoWriter_fourcc(*fourcc)
+        video_writer = cv2.VideoWriter(
+            output_path,
+            fourcc_code,
+            fps,
+            (width, height)
+        )
     
     if not video_writer.isOpened():
         raise ValueError(f"Failed to create video writer for: {output_path}")

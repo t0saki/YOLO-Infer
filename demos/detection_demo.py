@@ -195,11 +195,11 @@ class DetectionDemo:
                     save=False
                 )
                 
-                # Draw detections
-                annotated_frame = frame.copy()
+                # Draw detections on a copy of the original frame
+                display_frame = frame.copy()
                 if results and len(results) > 0:
                     result = results[0]
-                    annotated_frame = draw_detections(frame, result)
+                    display_frame = draw_detections(frame, result)
                     
                     # Count detections
                     if result.boxes:
@@ -207,13 +207,13 @@ class DetectionDemo:
                 
                 # Display frame
                 if show:
-                    cv2.imshow('YOLO11 Video Detection', annotated_frame)
+                    cv2.imshow('YOLO11 Video Detection', display_frame)
                     if cv2.waitKey(1) & 0xFF == ord('q'):
                         break
                 
                 # Write frame
                 if video_writer:
-                    video_writer.write(annotated_frame)
+                    video_writer.write(display_frame)
                 
                 # Progress update
                 if frame_count % 30 == 0:
@@ -285,18 +285,18 @@ class DetectionDemo:
                     save=False
                 )
                 
-                # Draw detections
-                annotated_frame = frame.copy()
+                # Draw detections on a copy of the original frame
+                display_frame = frame.copy()
                 if results and len(results) > 0:
                     result = results[0]
-                    annotated_frame = draw_detections(frame, result)
+                    display_frame = draw_detections(frame, result)
                 
                 # Display frame
-                cv2.imshow('YOLO11 Webcam Detection (Press Q to quit)', annotated_frame)
+                cv2.imshow('YOLO11 Webcam Detection (Press Q to quit)', display_frame)
                 
                 # Write frame
                 if video_writer:
-                    video_writer.write(annotated_frame)
+                    video_writer.write(display_frame)
                 
                 # Check for exit
                 if cv2.waitKey(1) & 0xFF == ord('q'):

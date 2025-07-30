@@ -12,3 +12,6 @@ __pycache__
 *.pt
 yolo11_project
 experiments
+runs
+debug_training_output
+benchmark_results

@@ -199,6 +199,8 @@ class SpeedBenchmark:
                 
             except Exception as e:
                 logger.error(f"Failed to benchmark quantization method {method}: {e}")
+                import traceback
+                logger.debug(traceback.format_exc())
                 results['methods'][method] = {'error': str(e)}
         
         # Save results

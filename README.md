@@ -50,7 +50,7 @@ python main.py train --model yolo11n.pt --data custom.yaml --fine-tune
 
 #### Validate Model
 ```bash
-python main.py val --model yolo11n.pt --data coco8.yaml
+python main.py val --model yolo11n.pt --data coco128.yaml
 ```
 
 #### Optimize Model

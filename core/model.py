@@ -138,6 +138,7 @@ class YOLO11Model:
         epochs: int = 100,
         imgsz: int = 640,
         batch: int = 16,
+        custom_trainer=None,
         **kwargs
     ) -> Any:
         """
@@ -148,19 +149,33 @@ class YOLO11Model:
             epochs: Number of training epochs
             imgsz: Image size
             batch: Batch size
+            custom_trainer: Custom trainer class to use (optional)
             **kwargs: Additional training arguments
         
         Returns:
             Training results
         """
-        return self.model.train(
-            data=data,
-            epochs=epochs,
-            imgsz=imgsz,
-            batch=batch,
-            device=self.device,
-            **kwargs
-        )
+        if custom_trainer is not None:
+            # Use custom trainer if provided
+            # This would require special handling depending on the trainer implementation
+            return self.model.train(
+                data=data,
+                epochs=epochs,
+                imgsz=imgsz,
+                batch=batch,
+                device=self.device,
+                **kwargs
+            )
+        else:
+            # Use standard training
+            return self.model.train(
+                data=data,
+                epochs=epochs,
+                imgsz=imgsz,
+                batch=batch,
+                device=self.device,
+                **kwargs
+            )
     
     def val(
         self,

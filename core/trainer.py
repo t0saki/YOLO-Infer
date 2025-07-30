@@ -16,6 +16,7 @@ from datetime import datetime
 
 from ultralytics import YOLO
 from .model import YOLO11Model
+from utils.checkpoint import CheckpointManager
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,10 @@ class YOLO11Trainer:
         self.current_epoch = 0
         self.is_training = False
         
+        # Checkpoint manager
+        self.checkpoint_dir = self.output_dir / "checkpoints"
+        self.checkpoint_manager = CheckpointManager(self.checkpoint_dir)
+        
         # Setup logging
         self._setup_logging()
         
@@ -97,6 +102,8 @@ class YOLO11Trainer:
         save_period: int = -1,
         val: bool = True,
         plots: bool = True,
+        resume: bool = False,
+        checkpoint_period: int = 1,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -112,6 +119,8 @@ class YOLO11Trainer:
             save_period: Save checkpoint every n epochs (-1 to disable)
             val: Whether to validate during training
             plots: Whether to generate training plots
+            resume: Whether to resume training from checkpoint
+            checkpoint_period: Save checkpoint every n epochs (default: 1)
             **kwargs: Additional training arguments
         
         Returns:
@@ -123,6 +132,42 @@ class YOLO11Trainer:
         self.is_training = True
         self.current_epoch = 0
         
+        # Check if we should resume from checkpoint
+        start_epoch = 0
+        if resume:
+            # First check our custom checkpoints directory
+            latest_checkpoint = self.checkpoint_manager.get_latest_checkpoint()
+            
+            # If not found, check Ultralytics weights directory
+            if not latest_checkpoint:
+                weights_dir = self.output_dir / "weights"
+                # Look for epoch checkpoints in weights directory
+                epoch_checkpoints = list(weights_dir.glob('epoch*.pt'))
+                if epoch_checkpoints:
+                    # Sort by modification time to get latest
+                    epoch_checkpoints.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+                    latest_checkpoint = epoch_checkpoints[0]
+            
+            if latest_checkpoint:
+                logger.info(f"Resuming training from checkpoint: {latest_checkpoint}")
+                # For Ultralytics YOLO, we need to pass resume=True to the train method
+                # instead of manually loading the checkpoint
+                kwargs['resume'] = True
+                # Get the start epoch from checkpoint name
+                checkpoint_name = latest_checkpoint.name
+                if 'epoch' in checkpoint_name:
+                    try:
+                        # Handle both epoch0.pt and checkpoint_epoch_0.pt formats
+                        if checkpoint_name.startswith('epoch'):
+                            start_epoch = int(checkpoint_name.split('epoch')[1].split('.')[0])
+                        elif 'epoch_' in checkpoint_name:
+                            start_epoch = int(checkpoint_name.split('epoch_')[1].split('.')[0])
+                        logger.info(f"Resuming from epoch: {start_epoch}")
+                    except:
+                        logger.warning("Could not parse epoch from checkpoint name")
+            else:
+                logger.warning("No checkpoint found to resume from. Starting new training.")
+        
         # Prepare training arguments
         # Note: We don't pass 'device' here since it's already set in the model during initialization
         train_args = {
@@ -132,7 +177,7 @@ class YOLO11Trainer:
             'batch': batch,
             'lr0': lr,
             'patience': patience,
-            'save_period': save_period,
+            'save_period': checkpoint_period,  # Use checkpoint_period instead of hardcoded -1
             'val': val,
             'plots': plots,
             'project': str(self.output_dir.parent),
@@ -156,6 +201,7 @@ class YOLO11Trainer:
             
         except Exception as e:
             logger.error(f"Training failed: {e}")
+            # Re-raise the exception to maintain existing behavior
             raise
         finally:
             self.is_training = False
@@ -256,23 +302,46 @@ class YOLO11Trainer:
     
     def resume_training(
         self,
-        checkpoint_path: Union[str, Path],
+        checkpoint_path: Union[str, Path] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
         Resume training from a checkpoint.
         
         Args:
-            checkpoint_path: Path to checkpoint file
+            checkpoint_path: Path to checkpoint file. If None, will try to find the latest checkpoint.
             **kwargs: Additional training arguments
         
         Returns:
             Resumed training results
         """
+        # If no checkpoint path provided, try to find the latest one
+        if checkpoint_path is None:
+            checkpoint_path = self.checkpoint_manager.get_latest_checkpoint()
+            
+        if checkpoint_path is None:
+            logger.warning("No checkpoint found. Starting new training.")
+            # Extract training parameters from kwargs or use defaults
+            data = kwargs.pop('data', None)
+            if data is None:
+                raise ValueError("Data parameter is required to start new training")
+            return self.train(data=data, resume=False, **kwargs)
+        
         logger.info(f"Resuming training from checkpoint: {checkpoint_path}")
         
-        # Load checkpoint
-        self.model.load(checkpoint_path)
+        # Load checkpoint using our checkpoint manager
+        try:
+            checkpoint_data = self.checkpoint_manager.load_checkpoint(
+                checkpoint_path=checkpoint_path,
+                model=self.model.model if hasattr(self.model, 'model') else self.model,
+                device=self.device
+            )
+            start_epoch = checkpoint_data.get('epoch', 0)
+            logger.info(f"Checkpoint loaded successfully. Resuming from epoch: {start_epoch}")
+        except Exception as e:
+            logger.warning(f"Failed to load checkpoint with checkpoint manager: {e}")
+            logger.info("Falling back to model.load method")
+            self.model.load(str(checkpoint_path))
         
         # Resume training
         # Note: We don't pass 'device' here since it's already set in the model during initialization
@@ -402,13 +471,56 @@ class YOLO11Trainer:
             'model_info': self.model.get_model_info()
         }
     
-    def save_checkpoint(self, path: Optional[Union[str, Path]] = None):
-        """Save training checkpoint."""
-        if path is None:
-            path = self.output_dir / f"checkpoint_epoch_{self.current_epoch}.pt"
+    def save_checkpoint(self, epoch: int = None, path: Optional[Union[str, Path]] = None, 
+                    metrics: Optional[Dict[str, float]] = None, optimizer: Optional[torch.optim.Optimizer] = None):
+        """Save training checkpoint using the checkpoint manager for consistent format.
         
-        self.model.save(path)
-        logger.info(f"Checkpoint saved to: {path}")
+        Args:
+            epoch: Current epoch
+            path: Checkpoint path (optional)
+            metrics: Training metrics to save
+            optimizer: Optimizer state to save
+        """
+        if epoch is not None:
+            self.current_epoch = epoch
+            
+        # Use the checkpoint manager to save checkpoint with consistent format
+        checkpoint_path = self.checkpoint_manager.save_checkpoint(
+            model=self.model.model if hasattr(self.model, 'model') else self.model,
+            optimizer=optimizer,
+            epoch=self.current_epoch,
+            metrics=metrics,
+            filename=path.name if path else None
+        )
+        
+        logger.info(f"Checkpoint saved to: {checkpoint_path}")
+        return checkpoint_path
+    
+    def load_checkpoint(self, checkpoint_path: Union[str, Path], optimizer: Optional[torch.optim.Optimizer] = None) -> Dict[str, Any]:
+        """Load training checkpoint using the checkpoint manager for consistent format.
+        
+        Args:
+            checkpoint_path: Path to checkpoint file
+            optimizer: Optimizer to load state into (optional)
+            
+        Returns:
+            Checkpoint data dictionary
+        """
+        # Use the checkpoint manager to load checkpoint with consistent format
+        checkpoint = self.checkpoint_manager.load_checkpoint(
+            checkpoint_path=checkpoint_path,
+            model=self.model.model if hasattr(self.model, 'model') else self.model,
+            optimizer=optimizer,
+            device=self.device
+        )
+        
+        # Update current epoch
+        self.current_epoch = checkpoint.get('epoch', 0)
+        
+        logger.info(f"Checkpoint loaded from: {checkpoint_path}")
+        logger.info(f"Resumed from epoch: {self.current_epoch}")
+        
+        return checkpoint
     
     def export_model(
         self,
@@ -428,6 +540,41 @@ class YOLO11Trainer:
         export_path = self.model.export(format=format, **kwargs)
         logger.info(f"Model exported to: {export_path}")
         return export_path
+    
+    def list_checkpoints(self) -> List[Dict[str, Any]]:
+        """List all checkpoints with their information.
+        
+        Returns:
+            List of checkpoint information dictionaries
+        """
+        return self.checkpoint_manager.list_checkpoints()
+    
+    def get_checkpoint_info(self, checkpoint_path: Union[str, Path]) -> Dict[str, Any]:
+        """Get detailed information about a specific checkpoint.
+        
+        Args:
+            checkpoint_path: Path to checkpoint file
+            
+        Returns:
+            Checkpoint information dictionary
+        """
+        return self.checkpoint_manager.get_checkpoint_info(checkpoint_path)
+    
+    def cleanup_checkpoints(self, keep_last_n: int = 5):
+        """Clean up old checkpoints, keeping only the last N.
+        
+        Args:
+            keep_last_n: Number of recent checkpoints to keep
+        """
+        self.checkpoint_manager.cleanup_checkpoints(keep_last_n)
+    
+    def remove_checkpoint(self, checkpoint_path: Union[str, Path]):
+        """Remove a specific checkpoint file.
+        
+        Args:
+            checkpoint_path: Path to checkpoint file to remove
+        """
+        self.checkpoint_manager.remove_checkpoint(checkpoint_path)
     
     def __repr__(self) -> str:
         return (f"YOLO11Trainer(model={self.model.task}, device={self.device}, "

@@ -21,6 +21,7 @@ sys.path.append(str(Path(__file__).parent))
 from core.model import YOLO11Model, YOLO11Factory
 from core.trainer import YOLO11Trainer, create_trainer
 from core.validator import YOLO11Validator, create_validator
+from core.robust_trainer import RobustYOLO11Trainer, create_robust_trainer
 from optimization.quantization.quantizers import create_quantizer
 from benchmarks.speed_benchmark import SpeedBenchmark
 from demos.detection_demo import DetectionDemo
@@ -80,7 +81,7 @@ Examples:
         demo_parser.add_argument('--task', type=str, default='detect',
                                choices=['detect', 'segment', 'classify', 'pose', 'obb'],
                                help='Task type')
-        demo_parser.add_argument('--model', '-m', type=str, default=None,
+        demo_parser.add_argument('--model', '-m', type=str, default="yolo11n.pt",
                                help='Model path or size')
         demo_parser.add_argument('--input', '-i', type=str, required=True,
                                help='Input source (image, video, webcam)')
@@ -115,6 +116,12 @@ Examples:
                                 help='Resume training from checkpoint')
         train_parser.add_argument('--fine-tune', action='store_true',
                                 help='Fine-tune a pretrained model')
+        train_parser.add_argument('--checkpoint-period', type=int, default=1,
+                                help='Save checkpoint every n epochs (default: 1)')
+        train_parser.add_argument('--skip-errors', action='store_true', default=True,
+                                help='Skip batches that cause errors (like shape mismatches) instead of stopping training (default: enabled)')
+        train_parser.add_argument('--no-skip-errors', action='store_false', dest='skip_errors',
+                                help='Disable error skipping and stop training when errors occur')
         
         # Validation command
         val_parser = subparsers.add_parser('val', help='Validate a model')
@@ -146,6 +153,10 @@ Examples:
                               help='Output path for optimized model')
         opt_parser.add_argument('--config-file', type=str, default=None,
                               help='Optimization configuration file')
+        opt_parser.add_argument('--resume', action='store_true',
+                              help='Resume optimization from checkpoint (for QAT)')
+        opt_parser.add_argument('--checkpoint-period', type=int, default=1,
+                              help='Save checkpoint every n epochs (default: 1)')
         
         # Benchmark command
         bench_parser = subparsers.add_parser('benchmark', help='Run benchmarks')
@@ -225,43 +236,42 @@ Examples:
         try:
             # Create trainer
             if args.model and Path(args.model).exists():
-                # Load existing model
-                trainer = YOLO11Trainer(
+                # Load existing model using robust trainer
+                trainer = RobustYOLO11Trainer(
                     model=args.model,
                     device=args.device,
                     output_dir=args.output_dir
                 )
             else:
-                # Create new model
+                # Create new model using robust trainer
                 model_size = args.model if args.model and len(args.model) == 1 else 'n'
-                trainer = create_trainer(
+                trainer = create_robust_trainer(
                     model_size=model_size,
                     device=args.device,
                     output_dir=args.output_dir
                 )
             
             # Run training
-            if args.resume:
-                # Resume from checkpoint
-                results = trainer.resume_training(
-                    checkpoint_path=args.model,
-                    data=args.data
-                )
-            elif args.fine_tune:
+            if args.fine_tune:
                 # Fine-tune model
-                results = trainer.fine_tune(
+                results = trainer.train(
                     data=args.data,
                     epochs=args.epochs,
-                    lr=args.lr
+                    lr=args.lr,
+                    checkpoint_period=args.checkpoint_period,
+                    skip_errors=args.skip_errors
                 )
             else:
-                # Standard training
+                # Standard training or resume training
                 results = trainer.train(
                     data=args.data,
                     epochs=args.epochs,
                     imgsz=args.imgsz,
                     batch=args.batch,
-                    lr=args.lr
+                    lr=args.lr,
+                    resume=args.resume,
+                    checkpoint_period=args.checkpoint_period,
+                    skip_errors=args.skip_errors
                 )
             
             self.logger.info("Training completed successfully")
@@ -322,8 +332,18 @@ Examples:
                 # This is simplified - in practice you'd load actual data
                 calibration_loader = [torch.randn(1, 3, 640, 640) for _ in range(100)]
                 quantizer.set_calibration_data(calibration_loader)
-            
-            optimized_model = quantizer.optimize()
+                optimized_model = quantizer.optimize()
+            elif args.method == 'qat':
+                # For QAT, we need training data
+                # This is simplified - in practice you'd load actual training data
+                train_loader = [torch.randn(1, 3, 640, 640) for _ in range(100)]
+                optimized_model = quantizer.optimize(
+                    train_loader=train_loader,
+                    resume=args.resume,
+                    checkpoint_period=args.checkpoint_period
+                )
+            else:
+                optimized_model = quantizer.optimize()
             
             # Save optimized model
             output_path = args.output or f"{Path(args.model).stem}_{args.method}.pt"
@@ -476,4 +496,4 @@ def main():
 
 
 if __name__ == '__main__':
-    exit(main())
+    main()

@@ -17,6 +17,7 @@ import logging
 from pathlib import Path
 
 from ..base import QuantizationOptimizer
+from utils.checkpoint import CheckpointManager
 
 logger = logging.getLogger(__name__)
 
@@ -392,16 +393,22 @@ class QATQuantizer(QuantizationOptimizer):
         self.num_epochs = self.config.get('num_epochs', 10)
         self.learning_rate = self.config.get('learning_rate', 1e-4)
         self.quantization_backend = self.config.get('backend', 'qnnpack')
+        self.checkpoint_dir = self.config.get('checkpoint_dir', 'qat_checkpoints')
 
         # Set quantization backend
         torch.backends.quantized.engine = self.quantization_backend
+        
+        # Initialize checkpoint manager
+        self.checkpoint_manager = CheckpointManager(self.checkpoint_dir)
     
-    def optimize(self, train_loader: Any = None, **kwargs) -> Any:
+    def optimize(self, train_loader: Any = None, resume: bool = False, checkpoint_period: int = 1, **kwargs) -> Any:
         """
         Perform quantization-aware training.
         
         Args:
             train_loader: Training data loader
+            resume: Whether to resume from checkpoint
+            checkpoint_period: Save checkpoint every n epochs (default: 1)
             **kwargs: Additional arguments
             
         Returns:
@@ -418,9 +425,26 @@ class QATQuantizer(QuantizationOptimizer):
         # Setup optimizer and loss function
         optimizer = torch.optim.Adam(model_to_train.parameters(), lr=self.learning_rate)
         
+        # Resume from checkpoint if requested
+        start_epoch = 0
+        if resume:
+            latest_checkpoint = self.checkpoint_manager.get_latest_checkpoint()
+            if latest_checkpoint:
+                logger.info(f"Resuming from checkpoint: {latest_checkpoint}")
+                checkpoint = self.checkpoint_manager.load_checkpoint(
+                    checkpoint_path=latest_checkpoint,
+                    model=model_to_train,
+                    optimizer=optimizer,
+                    device=self.device
+                )
+                start_epoch = checkpoint.get('epoch', 0) + 1
+                logger.info(f"Resumed from epoch {start_epoch}")
+            else:
+                logger.warning("No checkpoint found to resume from. Starting new training.")
+        
         # Training loop
         model_to_train.train()
-        for epoch in range(self.num_epochs):
+        for epoch in range(start_epoch, self.num_epochs):
             epoch_loss = 0.0
             num_batches = 0
             
@@ -459,6 +483,19 @@ class QATQuantizer(QuantizationOptimizer):
             
             avg_loss = epoch_loss / num_batches if num_batches > 0 else 0.0
             logger.info(f"Epoch {epoch+1}/{self.num_epochs} completed, Average Loss: {avg_loss:.4f}")
+            
+            # Save checkpoint every checkpoint_period epochs
+            if checkpoint_period > 0 and (epoch + 1) % checkpoint_period == 0:
+                try:
+                    self.checkpoint_manager.save_checkpoint(
+                        model=model_to_train,
+                        optimizer=optimizer,
+                        epoch=epoch,
+                        metrics={'loss': avg_loss}
+                    )
+                    logger.info(f"Checkpoint saved for epoch {epoch+1}")
+                except Exception as e:
+                    logger.warning(f"Failed to save checkpoint for epoch {epoch+1}: {e}")
         
         # Convert to quantized model
         model_to_train.eval()

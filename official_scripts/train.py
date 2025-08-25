@@ -10,4 +10,4 @@ from ultralytics import YOLO
 model = YOLO("yolo11n_int8_openvino_model")
 
 # Train the model
-results = model.train(data="coco8.yaml", epochs=100, imgsz=640)
+results = model.train(data="coco128.yaml", epochs=100, imgsz=640)

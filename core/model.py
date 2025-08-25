@@ -113,6 +113,8 @@ class YOLO11Model:
             return model
         except Exception as e:
             logger.error(f"Failed to load model: {e}")
+            import traceback
+            logger.debug(traceback.format_exc())
             raise
     
     def predict(

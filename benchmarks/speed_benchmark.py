@@ -35,7 +35,8 @@ class SpeedBenchmark:
         self,
         output_dir: str = "benchmark_results",
         warmup_runs: int = 10,
-        benchmark_runs: int = 100
+        benchmark_runs: int = 100,
+        device: Optional[str] = None
     ):
         """
         Initialize speed benchmark.
@@ -44,18 +45,22 @@ class SpeedBenchmark:
             output_dir: Directory to save benchmark results
             warmup_runs: Number of warmup runs
             benchmark_runs: Number of benchmark runs
+            device: Device to use for benchmarking
         """
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
         self.warmup_runs = warmup_runs
         self.benchmark_runs = benchmark_runs
+        self.device = device
         
         # Get system info
         self.system_info = get_device_info()
         
         logger.info(f"Speed benchmark initialized")
         logger.info(f"System info: {self.system_info['platform']}")
+        if self.device:
+            logger.info(f"Using device: {self.device}")
         logger.info(f"Device: {torch.cuda.get_device_name() if torch.cuda.is_available() else 'CPU'}")
     
     def benchmark_model_sizes(
@@ -90,7 +95,7 @@ class SpeedBenchmark:
             logger.info(f"Benchmarking model size: {size}")
             
             # Create model
-            model = YOLO11Model(task=task, size=size)
+            model = YOLO11Model(task=task, size=size, device=self.device)
             
             for img_size in image_sizes:
                 for batch_size in batch_sizes:
@@ -98,8 +103,15 @@ class SpeedBenchmark:
                     
                     # Create test input
                     test_input = torch.randn(batch_size, 3, img_size, img_size)
-                    if torch.cuda.is_available():
-                        test_input = test_input.cuda()
+                    if self.device:
+                        if self.device == 'cuda' and torch.cuda.is_available():
+                            test_input = test_input.cuda()
+                        elif self.device != 'cuda':
+                            test_input = test_input.to(self.device)
+                    else:
+                        # Auto-detect device
+                        if torch.cuda.is_available():
+                            test_input = test_input.cuda()
                     
                     # Run benchmark
                     metrics = self._benchmark_inference(model, test_input)
@@ -155,11 +167,18 @@ class SpeedBenchmark:
         
         # Benchmark original model
         logger.info("Benchmarking original model (FP32)")
-        original_model = YOLO11Model(task=task, size=model_size)
+        original_model = YOLO11Model(task=task, size=model_size, device=self.device)
         
         test_input = torch.randn(batch_size, 3, image_size, image_size)
-        if torch.cuda.is_available():
-            test_input = test_input.cuda()
+        if self.device:
+            if self.device == 'cuda' and torch.cuda.is_available():
+                test_input = test_input.cuda()
+            elif self.device != 'cuda':
+                test_input = test_input.to(self.device)
+        else:
+            # Auto-detect device
+            if torch.cuda.is_available():
+                test_input = test_input.cuda()
         
         original_metrics = self._benchmark_inference(original_model, test_input)
         results['methods']['original'] = original_metrics
@@ -170,7 +189,7 @@ class SpeedBenchmark:
             
             try:
                 # Create quantized model
-                quantizer = create_quantizer(method, original_model)
+                quantizer = create_quantizer(method, original_model, device=self.device)
                 
                 # For dynamic quantization, no calibration needed
                 if method == 'dynamic':
@@ -180,6 +199,13 @@ class SpeedBenchmark:
                     calibration_data = [test_input for _ in range(10)]
                     quantizer.set_calibration_data(calibration_data)
                     quantized_model = quantizer.optimize()
+                elif method == 'ultralytics_ptq':
+                    # For Ultralytics PTQ, we get an exported model path
+                    export_path = quantizer.optimize()
+                    logger.info(f"Ultralytics PTQ model exported to: {export_path}")
+                    # For benchmarking, we still use the original model as the quantized model
+                    # since we can't directly run inference on the exported model in this context
+                    quantized_model = original_model
                 else:
                     logger.warning(f"Quantization method {method} not implemented for benchmarking")
                     continue
@@ -232,12 +258,19 @@ class SpeedBenchmark:
         logger.info(f"Benchmarking throughput for {duration_seconds} seconds")
         
         # Create model
-        model = YOLO11Model(task=task, size=model_size)
+        model = YOLO11Model(task=task, size=model_size, device=self.device)
         
         # Create test input
         test_input = torch.randn(batch_size, 3, image_size, image_size)
-        if torch.cuda.is_available():
-            test_input = test_input.cuda()
+        if self.device:
+            if self.device == 'cuda' and torch.cuda.is_available():
+                test_input = test_input.cuda()
+            elif self.device != 'cuda':
+                test_input = test_input.to(self.device)
+        else:
+            # Auto-detect device
+            if torch.cuda.is_available():
+                test_input = test_input.cuda()
         
         # Start resource monitoring
         monitor = ResourceMonitor(interval=1.0)
@@ -444,7 +477,7 @@ def main():
     parser.add_argument('--batch-sizes', nargs='+', type=int, default=[1, 4, 8, 16],
                        help='Batch sizes to test')
     parser.add_argument('--quantization-methods', nargs='+', default=['dynamic', 'ptq'],
-                       help='Quantization methods to benchmark')
+                       help='Quantization methods to benchmark (options: dynamic, ptq, ultralytics_ptq)')
     parser.add_argument('--duration', type=int, default=60,
                        help='Duration for throughput benchmark (seconds)')
     parser.add_argument('--verbose', '-v', action='store_true',

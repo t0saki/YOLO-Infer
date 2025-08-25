@@ -1,4 +1,7 @@
 from ultralytics import YOLO
+import torch
 
 model = YOLO("yolo11n.pt")
-model.export(format="openvino", dynamic=True, int8=True, data="coco.yaml")
+print(model.model.model)
+
+# Quant model.model.model

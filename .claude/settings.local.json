@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(ffprobe:*)",
+      "Bash(ls:*)",
+      "Bash(rm:*)",
+      "Bash(find:*)",
+      "WebFetch(domain:docs.ultralytics.com)",
+      "Bash(chmod:*)",
+      "WebFetch(domain:pytorch.ac.cn)",
+      "WebFetch(domain:discuss.pytorch.org)",
+      "Bash(PYTORCH_ENABLE_MPS_FALLBACK=1 python test_model_size.py)",
+      "Bash(PYTORCH_ENABLE_MPS_FALLBACK=1 python main.py -v --device cpu benchmark --type quantization --model-sizes n)"
+    ],
+    "deny": []
+  }
+}

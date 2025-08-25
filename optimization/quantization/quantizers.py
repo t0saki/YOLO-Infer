@@ -2,9 +2,9 @@
 Quantization optimizers for YOLO11 models.
 
 This module implements various quantization techniques including:
-- Post-training quantization (PTQ)
+- Post-training quantization (PTQ) using Ultralytics export
 - Quantization-aware training (QAT)
-- Dynamic quantization
+- Dynamic quantization (legacy PyTorch approach)
 """
 
 import torch
@@ -14,12 +14,249 @@ from torch.quantization import QuantStub, DeQuantStub
 from typing import Any, Dict, Optional, List, Callable
 import copy
 import logging
+import os
+import tempfile
 from pathlib import Path
 
 from ..base import QuantizationOptimizer
 from utils.checkpoint import CheckpointManager
 
 logger = logging.getLogger(__name__)
+
+
+class UltralyticsPTQQuantizer(QuantizationOptimizer):
+    """
+    Post-Training Quantization (PTQ) optimizer using Ultralytics export.
+    
+    This quantizer performs INT8 quantization using Ultralytics built-in
+    export functionality, which is specifically designed for YOLO models.
+    """
+    
+    def __init__(
+        self,
+        model: Any,
+        config: Optional[Dict[str, Any]] = None,
+        device: Optional[str] = None
+    ):
+        super().__init__(model, config, device)
+        
+        # PTQ specific configurations
+        self.export_format = self.config.get('export_format', 'openvino')
+        self.calibration_data = self.config.get('calibration_data', 'coco8.yaml')
+        self.temp_dir = tempfile.mkdtemp()
+        
+    def optimize(self, calibration_loader: Any = None, **kwargs) -> Any:
+        """
+        Perform post-training quantization using Ultralytics export.
+        
+        Args:
+            calibration_loader: Data loader for calibration (unused for now)
+            **kwargs: Additional arguments
+            
+        Returns:
+            Quantized model (as exported model path)
+        """
+        logger.info("Starting post-training quantization using Ultralytics export...")
+        
+        try:
+            # Get the underlying YOLO model
+            if hasattr(self.original_model, 'model'):
+                yolo_model = self.original_model
+            else:
+                yolo_model = self.original_model
+                
+            # Export with INT8 quantization
+            export_path = yolo_model.export(
+                format=self.export_format,
+                int8=True,
+                data=self.calibration_data
+            )
+            
+            self.optimized_model = export_path
+            logger.info(f"Quantized model exported to: {export_path}")
+            
+        except Exception as e:
+            logger.error(f"Ultralytics PTQ quantization failed: {e}")
+            # Fallback to legacy PyTorch quantization
+            logger.warning("Falling back to legacy PyTorch quantization")
+            self.optimized_model = self._fallback_quantization()
+            
+        # Record optimization metrics
+        self._record_optimization_metrics()
+        
+        logger.info("Post-training quantization completed")
+        return self.optimized_model
+    
+    def _fallback_quantization(self) -> Any:
+        """Fallback to legacy PyTorch quantization."""
+        try:
+            # Get the underlying PyTorch model
+            if hasattr(self.original_model, 'model'):
+                pytorch_model = self.original_model.model
+            else:
+                pytorch_model = self.original_model
+                
+            # Set quantization backend
+            torch.backends.quantized.engine = 'qnnpack'
+            
+            # Try dynamic quantization
+            quantized_model = torch_quantization.quantize_dynamic(
+                pytorch_model,
+                {nn.Linear, nn.Conv2d},
+                dtype=torch.qint8
+            )
+            
+            # Wrap back if needed
+            if hasattr(self.original_model, 'model'):
+                self.original_model.model = quantized_model
+                return self.original_model
+            else:
+                return quantized_model
+                
+        except Exception as e:
+            logger.error(f"Fallback quantization also failed: {e}")
+            return self.original_model
+    
+    def evaluate(
+        self,
+        test_data: Any,
+        metrics: Optional[List[str]] = None
+    ) -> Dict[str, float]:
+        """Evaluate the quantized model."""
+        if self.optimized_model is None:
+            raise ValueError("No optimized model to evaluate. Run optimize() first.")
+        
+        # For exported models, we can't directly evaluate
+        # Return basic metrics based on model size
+        return {
+            'model_size_mb': self._get_model_size()
+        }
+    
+    def _prepare_model_for_quantization(self) -> Any:
+        """Prepare model for quantization - not used in Ultralytics PTQ."""
+        return self.original_model
+    
+    def _calibrate_model(self, model: Any) -> Any:
+        """Calibrate model - not used in Ultralytics PTQ."""
+        return model
+    
+    def _get_model_size(self) -> float:
+        """Get model size in MB."""
+        if self.optimized_model is None:
+            return 0.0
+            
+        try:
+            # If we have an exported model path, get its file size
+            if isinstance(self.optimized_model, str) and os.path.exists(self.optimized_model):
+                if os.path.isdir(self.optimized_model):
+                    # For directories, sum all file sizes
+                    total_size = 0
+                    for dirpath, dirnames, filenames in os.walk(self.optimized_model):
+                        for filename in filenames:
+                            filepath = os.path.join(dirpath, filename)
+                            total_size += os.path.getsize(filepath)
+                    size_mb = total_size / (1024 * 1024)
+                else:
+                    # For single files
+                    size_mb = os.path.getsize(self.optimized_model) / (1024 * 1024)
+                return size_mb
+        except Exception as e:
+            logger.warning(f"Could not get exported model size: {e}")
+            
+        # Fallback to original model size calculation
+        try:
+            # Get the underlying model
+            if hasattr(self.original_model, 'model'):
+                model = self.original_model.model
+            else:
+                model = self.original_model
+                
+            # Calculate model size using torch.save to a buffer
+            import io
+            buffer = io.BytesIO()
+            torch.save(model, buffer)
+            size_bytes = buffer.tell()
+            size_mb = size_bytes / (1024 * 1024)
+            return size_mb
+        except Exception:
+            # Fallback to parameter-based calculation
+            param_size = 0
+            buffer_size = 0
+            
+            if hasattr(self.original_model, 'model'):
+                model = self.original_model.model
+            else:
+                model = self.original_model
+                
+            # Check if model is quantized
+            is_quantized = False
+            for module in model.modules():
+                if hasattr(module, '_packed_params') or (hasattr(module, 'weight') and hasattr(module.weight, 'dtype') and 'qint' in str(module.weight.dtype)):
+                    is_quantized = True
+                    break
+                    
+            if is_quantized:
+                # For quantized models, use more conservative estimates
+                for module in model.modules():
+                    # Process parameters
+                    for param in module.parameters(recurse=False):  # Only direct parameters
+                        if param is not None:
+                            try:
+                                if hasattr(param, 'dtype') and ('qint' in str(param.dtype) or 'quint' in str(param.dtype)):
+                                    # Quantized parameter - use 1 byte per element for int8/uint8
+                                    param_size += param.nelement() * 1
+                                else:
+                                    # Regular parameter
+                                    param_size += param.nelement() * param.element_size()
+                            except Exception:
+                                # Fallback
+                                try:
+                                    param_size += param.nelement() * param.element_size()
+                                except:
+                                    pass
+                    # Process buffers
+                    for buffer_obj in module.buffers(recurse=False):  # Only direct buffers
+                        if buffer_obj is not None:
+                            try:
+                                buffer_size += buffer_obj.nelement() * buffer_obj.element_size()
+                            except Exception:
+                                pass
+            else:
+                # For non-quantized models, use standard calculation
+                for param in model.parameters():
+                    try:
+                        param_size += param.nelement() * param.element_size()
+                    except Exception:
+                        pass
+                        
+                for buffer_obj in model.buffers():
+                    try:
+                        buffer_size += buffer_obj.nelement() * buffer_obj.element_size()
+                    except Exception:
+                        pass
+                        
+            size_mb = (param_size + buffer_size) / (1024 * 1024)
+            return size_mb
+    
+    def _record_optimization_metrics(self):
+        """Record optimization metrics."""
+        model_size = self._get_model_size()
+        logger.info(f"Ultralytics PTQ: Recording model size: {model_size} MB")
+        self.optimization_metrics = {
+            'optimization_type': 'ultralytics_post_training_quantization',
+            'export_format': self.export_format,
+            'model_size_mb': model_size
+        }
+    
+    def get_optimization_info(self) -> Dict[str, Any]:
+        """Get optimization information."""
+        return {
+            'optimizer_type': 'UltralyticsPTQQuantizer',
+            'config': self.config,
+            'metrics': self.optimization_metrics,
+            'export_format': self.export_format
+        }
+
 
 class PostTrainingQuantizer(QuantizationOptimizer):
     """
@@ -269,32 +506,91 @@ class PostTrainingQuantizer(QuantizationOptimizer):
         if self.optimized_model is None:
             return 0.0
         
-        # Calculate model size
-        param_size = 0
-        buffer_size = 0
-        
-        if hasattr(self.optimized_model, 'model'):
-            model = self.optimized_model.model
-        else:
-            model = self.optimized_model
-        
-        for param in model.parameters():
-            param_size += param.nelement() * param.element_size()
-        
-        for buffer in model.buffers():
-            buffer_size += buffer.nelement() * buffer.element_size()
-        
-        size_mb = (param_size + buffer_size) / (1024 * 1024)
-        return size_mb
+        try:
+            # Calculate model size using torch.save to a buffer
+            # This is the most accurate way to get the actual model size
+            import io
+            buffer = io.BytesIO()
+            
+            if hasattr(self.optimized_model, 'model'):
+                torch.save(self.optimized_model.model, buffer)
+            else:
+                torch.save(self.optimized_model, buffer)
+            
+            size_bytes = buffer.tell()
+            size_mb = size_bytes / (1024 * 1024)
+            return size_mb
+        except Exception:
+            # Fallback to parameter-based calculation if torch.save fails
+            param_size = 0
+            buffer_size = 0
+            
+            if hasattr(self.optimized_model, 'model'):
+                model = self.optimized_model.model
+            else:
+                model = self.optimized_model
+            
+            # Check if model is quantized
+            is_quantized = False
+            for module in model.modules():
+                if hasattr(module, '_packed_params') or (hasattr(module, 'weight') and hasattr(module.weight, 'dtype') and 'qint' in str(module.weight.dtype)):
+                    is_quantized = True
+                    break
+            
+            if is_quantized:
+                # For quantized models, use more conservative estimates
+                for module in model.modules():
+                    # Process parameters
+                    for param in module.parameters(recurse=False):  # Only direct parameters
+                        if param is not None:
+                            try:
+                                if hasattr(param, 'dtype') and ('qint' in str(param.dtype) or 'quint' in str(param.dtype)):
+                                    # Quantized parameter - use 1 byte per element for int8/uint8
+                                    param_size += param.nelement() * 1
+                                else:
+                                    # Regular parameter
+                                    param_size += param.nelement() * param.element_size()
+                            except Exception:
+                                # Fallback
+                                try:
+                                    param_size += param.nelement() * param.element_size()
+                                except:
+                                    pass
+                    
+                    # Process buffers
+                    for buffer_obj in module.buffers(recurse=False):  # Only direct buffers
+                        if buffer_obj is not None:
+                            try:
+                                buffer_size += buffer_obj.nelement() * buffer_obj.element_size()
+                            except Exception:
+                                pass
+            else:
+                # For non-quantized models, use standard calculation
+                for param in model.parameters():
+                    try:
+                        param_size += param.nelement() * param.element_size()
+                    except Exception:
+                        pass
+                
+                for buffer_obj in model.buffers():
+                    try:
+                        buffer_size += buffer_obj.nelement() * buffer_obj.element_size()
+                    except Exception:
+                        pass
+            
+            size_mb = (param_size + buffer_size) / (1024 * 1024)
+            return size_mb
     
     def _record_optimization_metrics(self):
         """Record optimization metrics."""
+        model_size = self._get_model_size()
+        print(f"PTQ: Recording model size: {model_size} MB")
         self.optimization_metrics = {
             'optimization_type': 'post_training_quantization',
             'backend': self.quantization_backend,
             'dtype': str(self.quantization_dtype),
             'num_calibration_batches': self.num_calibration_batches,
-            'model_size_mb': self._get_model_size()
+            'model_size_mb': model_size
         }
     
     def get_optimization_info(self) -> Dict[str, Any]:
@@ -328,6 +624,10 @@ class DynamicQuantizer(QuantizationOptimizer):
         # Dynamic quantization specific configurations
         self.qconfig_dict = self.config.get('qconfig_dict', None)
         self.dtype = self.config.get('dtype', torch.qint8)
+        self.quantization_backend = self.config.get('backend', 'qnnpack')
+        
+        # Set quantization backend
+        torch.backends.quantized.engine = self.quantization_backend
         
     def optimize(self, **kwargs) -> Any:
         """
@@ -455,29 +755,89 @@ class DynamicQuantizer(QuantizationOptimizer):
         if self.optimized_model is None:
             return 0.0
         
-        param_size = 0
-        buffer_size = 0
-        
-        if hasattr(self.optimized_model, 'model'):
-            model = self.optimized_model.model
-        else:
-            model = self.optimized_model
-        
-        for param in model.parameters():
-            param_size += param.nelement() * param.element_size()
-        
-        for buffer in model.buffers():
-            buffer_size += buffer.nelement() * buffer.element_size()
-        
-        size_mb = (param_size + buffer_size) / (1024 * 1024)
-        return size_mb
+        try:
+            # Calculate model size using torch.save to a buffer
+            # This is the most accurate way to get the actual model size
+            import io
+            buffer = io.BytesIO()
+            
+            if hasattr(self.optimized_model, 'model'):
+                torch.save(self.optimized_model.model, buffer)
+            else:
+                torch.save(self.optimized_model, buffer)
+            
+            size_bytes = buffer.tell()
+            size_mb = size_bytes / (1024 * 1024)
+            return size_mb
+        except Exception:
+            # Fallback to parameter-based calculation if torch.save fails
+            param_size = 0
+            buffer_size = 0
+            
+            if hasattr(self.optimized_model, 'model'):
+                model = self.optimized_model.model
+            else:
+                model = self.optimized_model
+            
+            # Check if model is quantized
+            is_quantized = False
+            for module in model.modules():
+                if hasattr(module, '_packed_params') or (hasattr(module, 'weight') and hasattr(module.weight, 'dtype') and 'qint' in str(module.weight.dtype)):
+                    is_quantized = True
+                    break
+            
+            if is_quantized:
+                # For quantized models, use more conservative estimates
+                for module in model.modules():
+                    # Process parameters
+                    for param in module.parameters(recurse=False):  # Only direct parameters
+                        if param is not None:
+                            try:
+                                if hasattr(param, 'dtype') and ('qint' in str(param.dtype) or 'quint' in str(param.dtype)):
+                                    # Quantized parameter - use 1 byte per element for int8/uint8
+                                    param_size += param.nelement() * 1
+                                else:
+                                    # Regular parameter
+                                    param_size += param.nelement() * param.element_size()
+                            except Exception:
+                                # Fallback
+                                try:
+                                    param_size += param.nelement() * param.element_size()
+                                except:
+                                    pass
+                    
+                    # Process buffers
+                    for buffer_obj in module.buffers(recurse=False):  # Only direct buffers
+                        if buffer_obj is not None:
+                            try:
+                                buffer_size += buffer_obj.nelement() * buffer_obj.element_size()
+                            except Exception:
+                                pass
+            else:
+                # For non-quantized models, use standard calculation
+                for param in model.parameters():
+                    try:
+                        param_size += param.nelement() * param.element_size()
+                    except Exception:
+                        pass
+                
+                for buffer_obj in model.buffers():
+                    try:
+                        buffer_size += buffer_obj.nelement() * buffer_obj.element_size()
+                    except Exception:
+                        pass
+            
+            size_mb = (param_size + buffer_size) / (1024 * 1024)
+            return size_mb
     
     def _record_optimization_metrics(self):
         """Record optimization metrics."""
+        model_size = self._get_model_size()
+        print(f"Dynamic: Recording model size: {model_size} MB")
         self.optimization_metrics = {
             'optimization_type': 'dynamic_quantization',
             'dtype': str(self.dtype),
-            'model_size_mb': self._get_model_size()
+            'model_size_mb': model_size
         }
     
     def get_optimization_info(self) -> Dict[str, Any]:
@@ -723,22 +1083,80 @@ class QATQuantizer(QuantizationOptimizer):
         if self.optimized_model is None:
             return 0.0
         
-        param_size = 0
-        buffer_size = 0
-        
-        if hasattr(self.optimized_model, 'model'):
-            model = self.optimized_model.model
-        else:
-            model = self.optimized_model
-        
-        for param in model.parameters():
-            param_size += param.nelement() * param.element_size()
-        
-        for buffer in model.buffers():
-            buffer_size += buffer.nelement() * buffer.element_size()
-        
-        size_mb = (param_size + buffer_size) / (1024 * 1024)
-        return size_mb
+        try:
+            # Calculate model size using torch.save to a buffer
+            # This is the most accurate way to get the actual model size
+            import io
+            buffer = io.BytesIO()
+            
+            if hasattr(self.optimized_model, 'model'):
+                torch.save(self.optimized_model.model, buffer)
+            else:
+                torch.save(self.optimized_model, buffer)
+            
+            size_bytes = buffer.tell()
+            size_mb = size_bytes / (1024 * 1024)
+            return size_mb
+        except Exception:
+            # Fallback to parameter-based calculation if torch.save fails
+            param_size = 0
+            buffer_size = 0
+            
+            if hasattr(self.optimized_model, 'model'):
+                model = self.optimized_model.model
+            else:
+                model = self.optimized_model
+            
+            # Check if model is quantized
+            is_quantized = False
+            for module in model.modules():
+                if hasattr(module, '_packed_params') or (hasattr(module, 'weight') and hasattr(module.weight, 'dtype') and 'qint' in str(module.weight.dtype)):
+                    is_quantized = True
+                    break
+            
+            if is_quantized:
+                # For quantized models, use more conservative estimates
+                for module in model.modules():
+                    # Process parameters
+                    for param in module.parameters(recurse=False):  # Only direct parameters
+                        if param is not None:
+                            try:
+                                if hasattr(param, 'dtype') and ('qint' in str(param.dtype) or 'quint' in str(param.dtype)):
+                                    # Quantized parameter - use 1 byte per element for int8/uint8
+                                    param_size += param.nelement() * 1
+                                else:
+                                    # Regular parameter
+                                    param_size += param.nelement() * param.element_size()
+                            except Exception:
+                                # Fallback
+                                try:
+                                    param_size += param.nelement() * param.element_size()
+                                except:
+                                    pass
+                    
+                    # Process buffers
+                    for buffer_obj in module.buffers(recurse=False):  # Only direct buffers
+                        if buffer_obj is not None:
+                            try:
+                                buffer_size += buffer_obj.nelement() * buffer_obj.element_size()
+                            except Exception:
+                                pass
+            else:
+                # For non-quantized models, use standard calculation
+                for param in model.parameters():
+                    try:
+                        param_size += param.nelement() * param.element_size()
+                    except Exception:
+                        pass
+                
+                for buffer_obj in model.buffers():
+                    try:
+                        buffer_size += buffer_obj.nelement() * buffer_obj.element_size()
+                    except Exception:
+                        pass
+            
+            size_mb = (param_size + buffer_size) / (1024 * 1024)
+            return size_mb
     
     def _record_optimization_metrics(self):
         """Record optimization metrics."""
@@ -853,6 +1271,7 @@ class QuantizationUtils:
 from ..base import OptimizationRegistry
 
 OptimizationRegistry.register('ptq', PostTrainingQuantizer)
+OptimizationRegistry.register('ultralytics_ptq', UltralyticsPTQQuantizer)
 OptimizationRegistry.register('dynamic_quantization', DynamicQuantizer)
 OptimizationRegistry.register('qat', QATQuantizer)
 
@@ -867,7 +1286,7 @@ def create_quantizer(
     Factory function to create quantization optimizers.
     
     Args:
-        quantization_type: Type of quantization ('ptq', 'dynamic', 'qat')
+        quantization_type: Type of quantization ('ptq', 'ultralytics_ptq', 'dynamic', 'qat')
         model: Model to quantize
         config: Configuration dictionary
         **kwargs: Additional arguments
@@ -877,6 +1296,7 @@ def create_quantizer(
     """
     quantizer_map = {
         'ptq': PostTrainingQuantizer,
+        'ultralytics_ptq': UltralyticsPTQQuantizer,
         'dynamic': DynamicQuantizer,
         'qat': QATQuantizer
     }

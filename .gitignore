@@ -10,8 +10,14 @@ distilled_weights
 __pycache__
 *.log
 *.pt
+*.onnx
+*.engine
 yolo11_project
 experiments
 runs
 debug_training_output
 benchmark_results
+datasets
+test*
+debug*
+yolo11n*model

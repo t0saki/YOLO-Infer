@@ -363,7 +363,8 @@ Examples:
             benchmark = SpeedBenchmark(
                 output_dir=args.output_dir,
                 warmup_runs=10,
-                benchmark_runs=100
+                benchmark_runs=100,
+                device=args.device
             )
             
             # Run benchmarks

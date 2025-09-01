@@ -8,9 +8,11 @@ from ultralytics.utils.benchmarks import benchmark
 # benchmark(model="yolo11n.pt", data="coco8.yaml", imgsz=640, format="onnx")
 
 
-benchmark(model="yolo11n.pt", data="coco.yaml",
-          imgsz=640, format="tflite", half=False, int8=True, device="mps")
+# benchmark(model="yolo11n.pt", data="coco.yaml",
+#           imgsz=640, format="tflite", half=False, int8=True, device="mps")
 
+benchmark(model="yolo11n.pt", data="coco.yaml",
+          imgsz=640, format="openvino", half=False, int8=False, device="cpu")
 
 # benchmark(model="/Users/tosaki/dev/YOLO-Infer-pt/weights_new/ultralytics_converted.pt", data="coco.yaml",
 #           imgsz=640, format="openvino", half=False)

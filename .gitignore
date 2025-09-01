@@ -18,6 +18,7 @@ runs
 debug_training_output
 benchmark_results
 datasets
+datasets2
 test*
 debug*
 yolo11n*model
